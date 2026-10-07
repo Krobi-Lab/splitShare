@@ -513,3 +513,167 @@ describeDb("§8a placeholder members", () => {
     expect(rows).toHaveLength(1);
   });
 });
+
+describeDb("§7 reversal and §12 balances", () => {
+  beforeEach(async () => {
+    await db!.reset();
+  });
+
+  /** Inserts the negation of an expense, as `reverseExpense` does. */
+  async function reverse(expenseId: string, householdId: string, paidByUserId: string) {
+    const { prisma } = db!;
+    await prisma.$transaction(async (tx) => {
+      const splits = await tx.$queryRaw<Array<{ user_id: string; amount_cents: bigint }>>`
+        SELECT user_id, amount_cents FROM "expense_splits" WHERE expense_id = ${expenseId}::uuid
+      `;
+      const total = await tx.$queryRaw<[{ amount_cents: bigint }]>`
+        SELECT amount_cents FROM "expenses" WHERE id = ${expenseId}::uuid
+      `;
+      const [{ id: reversalId }] = await tx.$queryRaw<[{ id: string }]>`
+        INSERT INTO "expenses" (
+          id, household_id, paid_by_user_id, created_by_user_id, description,
+          amount_cents, currency, date, split_method, status, reverses_expense_id,
+          created_at, updated_at
+        )
+        VALUES (
+          gen_random_uuid(), ${householdId}::uuid, ${paidByUserId}::uuid,
+          ${paidByUserId}::uuid, 'Reversal', ${-total[0].amount_cents}, 'NZD',
+          CURRENT_DATE, 'EQUAL', 'ACCEPTED', ${expenseId}::uuid, now(), now()
+        )
+        RETURNING id
+      `;
+      for (const split of splits) {
+        await tx.$executeRaw`
+          INSERT INTO "expense_splits" (
+            id, expense_id, user_id, amount_cents, acceptance, accepted_at, created_at
+          )
+          VALUES (
+            gen_random_uuid(), ${reversalId}::uuid, ${split.user_id}::uuid,
+            ${-split.amount_cents}, 'ACCEPTED', now(), now()
+          )
+        `;
+      }
+      await tx.$executeRaw`
+        UPDATE "expenses" SET status = 'REVERSED' WHERE id = ${expenseId}::uuid
+      `;
+    });
+  }
+
+  async function nets(householdId: string): Promise<Map<string, number>> {
+    const rows = await db!.prisma.$queryRaw<
+      Array<{ user_id: string; net_cents: bigint }>
+    >`
+      SELECT user_id, net_cents FROM "household_balances"
+       WHERE household_id = ${householdId}::uuid
+    `;
+    return new Map(rows.map((row) => [row.user_id, Number(row.net_cents)]));
+  }
+
+  it("returns every balance to zero, not just the sum (regression)", async () => {
+    const { prisma } = db!;
+    const { householdId, userIds } = await seedHousehold(prisma, ["Ann", "Bob"]);
+    const { Ann, Bob } = userIds;
+
+    const expenseId = await seedAcceptedExpense(prisma, {
+      householdId,
+      paidByUserId: Ann,
+      amountCents: 9000,
+      splits: [
+        { userId: Ann, amountCents: 4500 },
+        { userId: Bob, amountCents: 4500 },
+      ],
+    });
+
+    const before = await nets(householdId);
+    expect(before.get(Ann)).toBe(4500);
+    expect(before.get(Bob)).toBe(-4500);
+
+    await reverse(expenseId, householdId, Ann);
+
+    // Counting the reversal row while the original dropped out would leave Ann
+    // at -4500 and Bob at +4500 — a symmetric error the zero-sum invariant
+    // cannot detect, which is why this asserts each balance individually.
+    const after = await nets(householdId);
+    expect(after.get(Ann)).toBe(0);
+    expect(after.get(Bob)).toBe(0);
+  });
+
+  it("leaves balances untouched when an unaccepted expense is reversed", async () => {
+    const { prisma } = db!;
+    const { householdId, userIds } = await seedHousehold(prisma, ["Ann", "Bob"]);
+
+    const expenseId = await prisma.$transaction(async (tx) => {
+      const [{ id }] = await tx.$queryRaw<[{ id: string }]>`
+        INSERT INTO "expenses" (
+          id, household_id, paid_by_user_id, created_by_user_id, description,
+          amount_cents, currency, date, split_method, status, created_at, updated_at
+        )
+        VALUES (
+          gen_random_uuid(), ${householdId}::uuid, ${userIds.Ann}::uuid,
+          ${userIds.Ann}::uuid, 'Groceries', 9000, 'NZD', CURRENT_DATE, 'EQUAL',
+          'PENDING_ACCEPTANCE', now(), now()
+        )
+        RETURNING id
+      `;
+      for (const userId of [userIds.Ann, userIds.Bob]) {
+        await tx.$executeRaw`
+          INSERT INTO "expense_splits" (id, expense_id, user_id, amount_cents, created_at)
+          VALUES (gen_random_uuid(), ${id}::uuid, ${userId}::uuid, 4500, now())
+        `;
+      }
+      return id;
+    });
+
+    await reverse(expenseId, householdId, userIds.Ann);
+
+    const after = await nets(householdId);
+    expect(after.get(userIds.Ann)).toBe(0);
+    expect(after.get(userIds.Bob)).toBe(0);
+  });
+
+  it("keeps a confirmed payment against a reversed expense visible as an overpayment", async () => {
+    const { prisma } = db!;
+    const { householdId, userIds } = await seedHousehold(prisma, ["Ann", "Bob"]);
+    const { Ann, Bob } = userIds;
+
+    const expenseId = await seedAcceptedExpense(prisma, {
+      householdId,
+      paidByUserId: Ann,
+      amountCents: 9000,
+      splits: [
+        { userId: Ann, amountCents: 4500 },
+        { userId: Bob, amountCents: 4500 },
+      ],
+    });
+
+    const [{ id: paymentId }] = await prisma.$queryRaw<[{ id: string }]>`
+      INSERT INTO "payments" (
+        id, household_id, from_user_id, to_user_id, amount_cents, currency, paid_at, created_at
+      )
+      VALUES (
+        gen_random_uuid(), ${householdId}::uuid, ${Bob}::uuid, ${Ann}::uuid,
+        4500, 'NZD', now(), now()
+      )
+      RETURNING id
+    `;
+    await prisma.$executeRaw`
+      INSERT INTO "payment_confirmations" (id, payment_id, confirmed_by_user_id, confirmed_at)
+      VALUES (gen_random_uuid(), ${paymentId}::uuid, ${Ann}::uuid, now())
+    `;
+
+    await reverse(expenseId, householdId, Ann);
+
+    // Bob paid for something that was then cancelled, so he is owed it back.
+    const rows = await prisma.$queryRaw<
+      Array<{ user_id: string; settled_net_cents: bigint }>
+    >`
+      SELECT user_id, settled_net_cents FROM "household_net_positions"
+       WHERE household_id = ${householdId}::uuid
+    `;
+    const settled = new Map(
+      rows.map((row) => [row.user_id, Number(row.settled_net_cents)]),
+    );
+    expect(settled.get(Bob)).toBe(4500);
+    expect(settled.get(Ann)).toBe(-4500);
+  });
+});

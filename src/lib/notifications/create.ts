@@ -20,6 +20,13 @@ export interface NotificationTarget {
   type: NotificationType;
   entityType?: string;
   entityId?: string;
+  /**
+   * Fields that differ per recipient, merged over the shared context.
+   *
+   * EXPENSE_CREATED reads "your share is X", and X is a different number for
+   * every participant, so the amount cannot live in the shared context.
+   */
+  context?: Partial<NotificationContext>;
 }
 
 export async function createNotifications(
@@ -37,7 +44,10 @@ export async function createNotifications(
 
   await tx.notification.createMany({
     data: options.targets.map((target) => {
-      const copy = notificationCopy(target.type, options.context);
+      const copy = notificationCopy(target.type, {
+        ...options.context,
+        ...target.context,
+      });
       return {
         householdId: options.householdId,
         userId: target.userId,

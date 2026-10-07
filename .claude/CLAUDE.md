@@ -210,6 +210,18 @@ Worked 3-payer example (used as a test fixture):
 
 **Invariant: the sum of all `net_cents` in a household is always exactly 0.**
 
+**Amendment — reversal rows are excluded.** The countable set also requires
+`reverses_expense_id IS NULL`. §7 reverses an expense by negating it into a new
+row and moving the original to `REVERSED`; the original then drops out of the
+list above, so counting the reversal as well would apply the cancellation twice
+and leave every balance wrong by the original amount. The zero-sum invariant
+still holds in that broken state — the error is symmetric — so balances must be
+asserted individually, not just summed. A reversed pair contributes nothing,
+which is what "cancelled" means, and the reversal row stays on the record
+carrying the reason. Confirmed *payments* against a reversed expense still count
+in `household_net_positions`, and should: money paid for something later
+cancelled is money owed back.
+
 ## §13 UI conventions
 
 See `.claude/skills/ui.skill.md`. Single source of truth for status colors is
