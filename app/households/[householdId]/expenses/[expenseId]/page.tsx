@@ -5,6 +5,7 @@ import { AcceptanceBadge, ExpenseStatusBadge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Money } from "@/components/ui/money";
 import { AppHeader } from "@/components/layout/app-header";
+import { HouseholdNav } from "@/components/layout/household-nav";
 import { NotAMemberError } from "@/lib/auth/errors";
 import { getExpense } from "@/lib/expenses/queries";
 import { getHousehold } from "@/lib/households/queries";
@@ -118,6 +119,7 @@ export default async function ExpensePage({
           </Card>
         ) : null}
       </main>
+      <HouseholdNav householdId={householdId} />
     </>
   );
 }

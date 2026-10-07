@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { AwaitingActionList } from "@/components/expenses/awaiting-action";
 import { ExpenseList } from "@/components/expenses/expense-list";
 import { AppHeader } from "@/components/layout/app-header";
+import { HouseholdNav } from "@/components/layout/household-nav";
 import { BalanceSummary, SettleUpPlan } from "@/components/dashboard/balance-summary";
 import { NotAMemberError } from "@/lib/auth/errors";
 import { requireAuth } from "@/lib/auth/guards";
@@ -63,6 +64,7 @@ export default async function HouseholdPage({
 
         <ExpenseList householdId={householdId} expenses={expenses} />
       </main>
+      <HouseholdNav householdId={householdId} />
     </>
   );
 }

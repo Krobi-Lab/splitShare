@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { ExpenseForm } from "@/components/expenses/expense-form";
 import { AppHeader } from "@/components/layout/app-header";
+import { HouseholdNav } from "@/components/layout/household-nav";
 import { InsufficientRoleError, NotAMemberError } from "@/lib/auth/errors";
 import { requireAuth, requireCapability } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db/client";
@@ -55,6 +56,7 @@ export default async function NewExpensePage({
           }))}
         />
       </main>
+      <HouseholdNav householdId={householdId} />
     </>
   );
 }
