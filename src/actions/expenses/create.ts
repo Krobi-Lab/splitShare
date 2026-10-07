@@ -158,6 +158,11 @@ export async function createExpense(
               shares: split.shares,
               acceptance: split.accepted ? "ACCEPTED" : "PENDING",
               acceptedAt: split.accepted ? now : null,
+              // Whoever paid has already covered their own share — there is
+              // nobody for them to pay. Without this an expense can never reach
+              // PAID, because their split would sit unsettled forever and
+              // `allSplitsSettled` would never be true.
+              settledAt: split.userId === data.paidByUserId ? now : null,
             })),
           },
         },

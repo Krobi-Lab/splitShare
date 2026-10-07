@@ -100,13 +100,24 @@ describeDb("§40 acceptance scenario, through the actions", () => {
 
     const splits = await prisma.expenseSplit.findMany({
       where: { expenseId },
-      select: { userId: true, amountCents: true, acceptance: true },
+      select: {
+        userId: true,
+        amountCents: true,
+        acceptance: true,
+        settledAt: true,
+      },
       orderBy: { userId: "asc" },
     });
     expect(splits).toHaveLength(2);
     const bobSplit = splits.find((split) => split.userId === bob.id)!;
     expect(bobSplit.amountCents).toBe(4500n);
     expect(bobSplit.acceptance).toBe("PENDING");
+    expect(bobSplit.settledAt).toBeNull();
+
+    // Ann paid the bill, so her own share is settled from the outset — there is
+    // nobody for her to pay. Without this the expense could never reach PAID.
+    const annSplit = splits.find((split) => split.userId === ann.id)!;
+    expect(annSplit.settledAt).not.toBeNull();
 
     // 4. Bob accepts. Status => ACCEPTED.
     actAs(bob);
@@ -406,7 +417,15 @@ describeDb("§8a placeholder members, through the actions", () => {
     expect(
       nets.get(ann.id)! + nets.get(pukar)! + nets.get(aniket)! + nets.get(sagar)!,
     ).toBe(0);
-    expect(nets.get(ann.id)).toBe(5941 - 1486);
+
+    // Ann is owed the total less her own share. Which participant receives the
+    // leftover cent depends on userId order (§2.6), and the ids are random
+    // uuids, so her share is read back rather than assumed.
+    const annShare = await prisma.expenseSplit.findFirstOrThrow({
+      where: { expenseId, userId: ann.id },
+      select: { amountCents: true },
+    });
+    expect(nets.get(ann.id)).toBe(5941 - Number(annShare.amountCents));
   });
 
   it("lets a manager settle a placeholder's debt and confirm it", async () => {
