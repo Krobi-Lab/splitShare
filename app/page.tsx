@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { SignOutButton } from "@/components/pwa/sign-out-button";
 import { signOut } from "@/lib/auth";
 import { getOptionalUser } from "@/lib/auth/guards";
 
@@ -24,20 +25,14 @@ export default async function Home() {
                 {user.name ?? user.email}
               </span>
             </p>
-            <form
-              className="mt-4"
-              action={async () => {
-                "use server";
-                await signOut({ redirectTo: "/" });
-              }}
-            >
-              <button
-                type="submit"
-                className="text-sm font-medium text-slate-600 underline underline-offset-4 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
-              >
-                Sign out
-              </button>
-            </form>
+            <div className="mt-4">
+              <SignOutButton
+                action={async () => {
+                  "use server";
+                  await signOut({ redirectTo: "/" });
+                }}
+              />
+            </div>
           </div>
         ) : (
           <Link
