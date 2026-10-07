@@ -148,6 +148,31 @@ describeDb("§10 deferred split-sum assertion", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("fires on an expenses row too, not only on expense_splits", async () => {
+    // Regression: the original trigger function served both tables and chose the
+    // expense id with a CASE on TG_TABLE_NAME. plpgsql plans an expression as a
+    // whole, so `NEW.expense_id` was resolved even when firing on `expenses`,
+    // which has no such column — ERROR 42703. Updating an expense's amount
+    // without touching its splits exercises that path.
+    const { prisma } = db!;
+    const { householdId, userIds } = await seedHousehold(prisma, ["Ann", "Bob"]);
+    const expenseId = await seedAcceptedExpense(prisma, {
+      householdId,
+      paidByUserId: userIds.Ann,
+      amountCents: 9000,
+      splits: [
+        { userId: userIds.Ann, amountCents: 4500 },
+        { userId: userIds.Bob, amountCents: 4500 },
+      ],
+    });
+
+    await expect(
+      prisma.$executeRaw`
+        UPDATE "expenses" SET amount_cents = 9500 WHERE id = ${expenseId}::uuid
+      `,
+    ).rejects.toThrow(/splits summing to 9000 but a total of 9500/);
+  });
+
   it("rejects at COMMIT when the splits do not sum to the expense total", async () => {
     const { prisma } = db!;
     const { householdId, userIds } = await seedHousehold(prisma, ["Ann", "Bob"]);

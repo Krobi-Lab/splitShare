@@ -156,30 +156,36 @@ export async function seedAcceptedExpense(
     description?: string;
   },
 ): Promise<string> {
-  const [{ id: expenseId }] = await prisma.$queryRaw<[{ id: string }]>`
-    INSERT INTO "expenses" (
-      id, household_id, paid_by_user_id, created_by_user_id, description,
-      amount_cents, currency, date, split_method, status, created_at, updated_at
-    )
-    VALUES (
-      gen_random_uuid(), ${options.householdId}::uuid, ${options.paidByUserId}::uuid,
-      ${options.paidByUserId}::uuid, ${options.description ?? "Groceries"},
-      ${BigInt(options.amountCents)}, 'NZD', CURRENT_DATE, 'EQUAL', 'ACCEPTED', now(), now()
-    )
-    RETURNING id
-  `;
-
-  for (const split of options.splits) {
-    await prisma.$executeRaw`
-      INSERT INTO "expense_splits" (
-        id, expense_id, user_id, amount_cents, acceptance, accepted_at, created_at
+  // One transaction, necessarily. The expense and its splits go in as separate
+  // statements, so run outside a transaction each would be its own implicit one
+  // and the DEFERRABLE split-sum trigger would fire at the end of each —
+  // rejecting the expense insert on its own, before any split exists.
+  return prisma.$transaction(async (tx) => {
+    const [{ id: expenseId }] = await tx.$queryRaw<[{ id: string }]>`
+      INSERT INTO "expenses" (
+        id, household_id, paid_by_user_id, created_by_user_id, description,
+        amount_cents, currency, date, split_method, status, created_at, updated_at
       )
       VALUES (
-        gen_random_uuid(), ${expenseId}::uuid, ${split.userId}::uuid,
-        ${BigInt(split.amountCents)}, 'ACCEPTED', now(), now()
+        gen_random_uuid(), ${options.householdId}::uuid, ${options.paidByUserId}::uuid,
+        ${options.paidByUserId}::uuid, ${options.description ?? "Groceries"},
+        ${BigInt(options.amountCents)}, 'NZD', CURRENT_DATE, 'EQUAL', 'ACCEPTED', now(), now()
       )
+      RETURNING id
     `;
-  }
 
-  return expenseId;
+    for (const split of options.splits) {
+      await tx.$executeRaw`
+        INSERT INTO "expense_splits" (
+          id, expense_id, user_id, amount_cents, acceptance, accepted_at, created_at
+        )
+        VALUES (
+          gen_random_uuid(), ${expenseId}::uuid, ${split.userId}::uuid,
+          ${BigInt(split.amountCents)}, 'ACCEPTED', now(), now()
+        )
+      `;
+    }
+
+    return expenseId;
+  });
 }
