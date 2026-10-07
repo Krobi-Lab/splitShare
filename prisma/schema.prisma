@@ -1,7 +1,16 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
+// SplitHome / splitShare — household expense sharing.
+//
+// Conventions enforced here (see .claude/CLAUDE.md):
+//   * Money is ALWAYS integer cents in a Postgres BIGINT. Never a float, never
+//     a Decimal. `src/lib/money.ts` is the only place bigint <-> number happens.
+//   * Tables and columns are snake_case via @@map/@map, because the
+//     immutability triggers (§10) and the `household_balances` view (§12) are
+//     hand-written SQL that must address them by their real names.
+//   * Financial facts are append-only. `payments` and `audit_logs` are
+//     protected by BEFORE UPDATE OR DELETE triggers, so neither model may own a
+//     mutable column: a payment is confirmed by INSERTing a
+//     `payment_confirmations` row and cancelled by INSERTing a reversal
+//     `payments` row. PaymentStatus is therefore derived, not stored.
 
 generator client {
   provider = "prisma-client"
@@ -10,4 +19,510 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+/// §5 role matrix.
+enum HouseholdRole {
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+/// §7 expense state machine. PAID and LOCKED are terminal for edits.
+enum ExpenseStatus {
+  PENDING_ACCEPTANCE
+  PARTIALLY_ACCEPTED
+  ACCEPTED
+  DISPUTED
+  PARTIALLY_PAID
+  PAID
+  LOCKED
+  REVERSED
+}
+
+/// §6 split methods. The server always recomputes amounts from these inputs.
+enum SplitMethod {
+  EQUAL
+  EXACT
+  PERCENTAGE
+  SHARES
+}
+
+/// §8 per-participant acceptance.
+enum AcceptanceStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+/// §9 payment lifecycle. DERIVED from payments + payment_confirmations +
+/// reversals; never stored on a row (see header note).
+enum PaymentStatus {
+  PENDING_CONFIRMATION
+  CONFIRMED
+  REVERSED
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  CARD
+  OTHER
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+/// §11 — every financial state transition writes one of these.
+enum AuditAction {
+  HOUSEHOLD_CREATED
+  HOUSEHOLD_UPDATED
+  MEMBER_INVITED
+  INVITATION_REVOKED
+  INVITATION_ACCEPTED
+  MEMBER_REMOVED
+  ROLE_CHANGED
+  EXPENSE_CREATED
+  EXPENSE_ACCEPTED
+  EXPENSE_REJECTED
+  EXPENSE_LOCKED
+  EXPENSE_REVERSED
+  PAYMENT_CREATED
+  PAYMENT_CONFIRMED
+  PAYMENT_REVERSED
+  SETTLEMENT_CREATED
+  CATEGORY_CREATED
+  CATEGORY_UPDATED
+}
+
+enum NotificationType {
+  EXPENSE_CREATED
+  SPLIT_ACCEPTED
+  SPLIT_REJECTED
+  PAYMENT_RECEIVED
+  PAYMENT_CONFIRMED
+  PAYMENT_REMINDER
+  MEMBER_JOINED
+  EXPENSE_LOCKED
+}
+
+// ---------------------------------------------------------------------------
+// Auth.js v5 (@auth/prisma-adapter) — field names are dictated by the adapter.
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(uuid(7)) @db.Uuid
+  name          String?
+  email         String    @unique
+  emailVerified DateTime? @map("email_verified")
+  image         String?
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  accounts Account[]
+  sessions Session[]
+
+  memberships        HouseholdMember[]
+  householdsCreated  Household[]            @relation("HouseholdCreatedBy")
+  expensesPaid       Expense[]              @relation("ExpensePaidBy")
+  expensesCreated    Expense[]              @relation("ExpenseCreatedBy")
+  expensesLocked     Expense[]              @relation("ExpenseLockedBy")
+  splits             ExpenseSplit[]
+  paymentsSent       Payment[]              @relation("PaymentFrom")
+  paymentsReceived   Payment[]              @relation("PaymentTo")
+  paymentsConfirmed  PaymentConfirmation[]
+  invitationsSent    Invitation[]           @relation("InvitationInvitedBy")
+  invitationsClaimed Invitation[]           @relation("InvitationAcceptedBy")
+  auditLogs          AuditLog[]
+  notifications      Notification[]
+  reminders          Reminder[]
+  uploads            FileUpload[]
+  settlements        Settlement[]
+  transfersFrom      SettlementTransfer[]   @relation("TransferFrom")
+  transfersTo        SettlementTransfer[]   @relation("TransferTo")
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(uuid(7)) @db.Uuid
+  userId            String  @map("user_id") @db.Uuid
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id") @db.Uuid
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Household
+// ---------------------------------------------------------------------------
+
+model Household {
+  id              String   @id @default(uuid(7)) @db.Uuid
+  name            String   @db.VarChar(100)
+  /// ISO 4217, always upper case.
+  currency        String   @db.Char(3)
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  /// §18 — days after the expense date on which reminders are due.
+  reminderOffsetDays Int[] @default([3, 7]) @map("reminder_offset_days")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  createdBy   User                 @relation("HouseholdCreatedBy", fields: [createdByUserId], references: [id])
+  members     HouseholdMember[]
+  invitations Invitation[]
+  categories  Category[]
+  expenses    Expense[]
+  payments    Payment[]
+  settlements Settlement[]
+  auditLogs   AuditLog[]
+  notifications Notification[]
+  reminders   Reminder[]
+  uploads     FileUpload[]
+
+  @@index([createdByUserId])
+  @@map("households")
+}
+
+model HouseholdMember {
+  id          String        @id @default(uuid(7)) @db.Uuid
+  householdId String        @map("household_id") @db.Uuid
+  userId      String        @map("user_id") @db.Uuid
+  role        HouseholdRole @default(MEMBER)
+  joinedAt    DateTime      @default(now()) @map("joined_at")
+  /// Soft removal: expense history must survive a member leaving.
+  removedAt   DateTime?     @map("removed_at")
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, userId])
+  @@index([userId])
+  @@map("household_members")
+}
+
+model Invitation {
+  id               String           @id @default(uuid(7)) @db.Uuid
+  householdId      String           @map("household_id") @db.Uuid
+  email            String
+  role             HouseholdRole    @default(MEMBER)
+  /// SHA-256 of the invite token. The raw token only ever exists in the email.
+  tokenHash        String           @unique @map("token_hash")
+  status           InvitationStatus @default(PENDING)
+  invitedByUserId  String           @map("invited_by_user_id") @db.Uuid
+  expiresAt        DateTime         @map("expires_at")
+  acceptedAt       DateTime?        @map("accepted_at")
+  acceptedByUserId String?          @map("accepted_by_user_id") @db.Uuid
+  revokedAt        DateTime?        @map("revoked_at")
+  createdAt        DateTime         @default(now()) @map("created_at")
+
+  household  Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  invitedBy  User      @relation("InvitationInvitedBy", fields: [invitedByUserId], references: [id])
+  acceptedBy User?     @relation("InvitationAcceptedBy", fields: [acceptedByUserId], references: [id])
+
+  @@index([householdId, status])
+  @@index([email])
+  @@map("invitations")
+}
+
+model Category {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  householdId String    @map("household_id") @db.Uuid
+  name        String    @db.VarChar(60)
+  icon        String?   @db.VarChar(40)
+  colorHex    String?   @map("color_hex") @db.Char(7)
+  archivedAt  DateTime? @map("archived_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  expenses  Expense[]
+
+  @@unique([householdId, name])
+  @@map("categories")
+}
+
+// ---------------------------------------------------------------------------
+// Expenses — immutable once accepted (§2.2). Corrections are new rows.
+// ---------------------------------------------------------------------------
+
+model Expense {
+  id              String        @id @default(uuid(7)) @db.Uuid
+  householdId     String        @map("household_id") @db.Uuid
+  paidByUserId    String        @map("paid_by_user_id") @db.Uuid
+  createdByUserId String        @map("created_by_user_id") @db.Uuid
+  categoryId      String?       @map("category_id") @db.Uuid
+  description     String        @db.VarChar(200)
+  /// Integer cents. Negative on a reversal row.
+  amountCents     BigInt        @map("amount_cents")
+  currency        String        @db.Char(3)
+  date            DateTime      @db.Date
+  notes           String?       @db.VarChar(2000)
+  receiptFileId   String?       @map("receipt_file_id") @db.Uuid
+  splitMethod     SplitMethod   @map("split_method")
+  status          ExpenseStatus @default(PENDING_ACCEPTANCE)
+  /// §7 — a correction is a new expense pointing at the one it reverses.
+  reversesExpenseId String?     @unique @map("reverses_expense_id") @db.Uuid
+  lockedAt        DateTime?     @map("locked_at")
+  lockedByUserId  String?       @map("locked_by_user_id") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  household       Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  paidBy          User          @relation("ExpensePaidBy", fields: [paidByUserId], references: [id])
+  createdBy       User          @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id])
+  lockedBy        User?         @relation("ExpenseLockedBy", fields: [lockedByUserId], references: [id])
+  category        Category?     @relation(fields: [categoryId], references: [id])
+  receiptFile     FileUpload?   @relation(fields: [receiptFileId], references: [id])
+  reversesExpense Expense?      @relation("ExpenseReversal", fields: [reversesExpenseId], references: [id])
+  reversedBy      Expense?      @relation("ExpenseReversal")
+  splits          ExpenseSplit[]
+
+  @@index([householdId, date])
+  @@index([householdId, status])
+  @@index([paidByUserId])
+  @@map("expenses")
+}
+
+model ExpenseSplit {
+  id          String           @id @default(uuid(7)) @db.Uuid
+  expenseId   String           @map("expense_id") @db.Uuid
+  userId      String           @map("user_id") @db.Uuid
+  /// Server-computed (§2.5). SUM over an expense == expenses.amount_cents,
+  /// asserted by a DEFERRABLE constraint trigger at COMMIT (§10).
+  amountCents BigInt           @map("amount_cents")
+  /// Retained inputs, so a split can be re-derived and audited.
+  percentBps  Int?             @map("percent_bps")
+  shares      Int?
+  acceptance  AcceptanceStatus @default(PENDING)
+  acceptedAt  DateTime?        @map("accepted_at")
+  rejectedAt  DateTime?        @map("rejected_at")
+  rejectionReason String?      @map("rejection_reason") @db.VarChar(500)
+  /// Set in the same transaction as the confirmation that fully covers it.
+  settledAt   DateTime?        @map("settled_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  expense   Expense    @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id])
+  payments  Payment[]
+  reminders Reminder[]
+
+  @@unique([expenseId, userId])
+  @@index([userId, acceptance])
+  @@map("expense_splits")
+}
+
+// ---------------------------------------------------------------------------
+// Payments — append-only. No mutable column exists on this table (§9/§10).
+// ---------------------------------------------------------------------------
+
+model Payment {
+  id             String        @id @default(uuid(7)) @db.Uuid
+  householdId    String        @map("household_id") @db.Uuid
+  fromUserId     String        @map("from_user_id") @db.Uuid
+  toUserId       String        @map("to_user_id") @db.Uuid
+  /// Integer cents. Negative on a reversal row.
+  amountCents    BigInt        @map("amount_cents")
+  currency       String        @db.Char(3)
+  method         PaymentMethod @default(OTHER)
+  /// Optional link to the split this payment settles.
+  expenseSplitId String?       @map("expense_split_id") @db.Uuid
+  settlementId   String?       @map("settlement_id") @db.Uuid
+  reference      String?       @db.VarChar(200)
+  note           String?       @db.VarChar(500)
+  paidAt         DateTime      @default(now()) @map("paid_at")
+  /// §9 — cancelling inserts a reversal row; the original is never touched.
+  reversesPaymentId String?    @unique @map("reverses_payment_id") @db.Uuid
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  household      Household            @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  fromUser       User                 @relation("PaymentFrom", fields: [fromUserId], references: [id])
+  toUser         User                 @relation("PaymentTo", fields: [toUserId], references: [id])
+  expenseSplit   ExpenseSplit?        @relation(fields: [expenseSplitId], references: [id])
+  settlement     Settlement?          @relation(fields: [settlementId], references: [id])
+  reversesPayment Payment?            @relation("PaymentReversal", fields: [reversesPaymentId], references: [id])
+  reversedBy     Payment?             @relation("PaymentReversal")
+  confirmation   PaymentConfirmation?
+
+  @@index([householdId, paidAt])
+  @@index([toUserId])
+  @@index([fromUserId])
+  @@index([expenseSplitId])
+  @@map("payments")
+}
+
+/// §9 — only the recipient may confirm. Its existence IS the CONFIRMED state,
+/// which is how `payments` stays free of mutable columns.
+model PaymentConfirmation {
+  id                String   @id @default(uuid(7)) @db.Uuid
+  paymentId         String   @unique @map("payment_id") @db.Uuid
+  confirmedByUserId String   @map("confirmed_by_user_id") @db.Uuid
+  confirmedAt       DateTime @default(now()) @map("confirmed_at")
+
+  payment     Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  confirmedBy User    @relation(fields: [confirmedByUserId], references: [id])
+
+  @@map("payment_confirmations")
+}
+
+// ---------------------------------------------------------------------------
+// Settlements — a snapshot of suggested minimal transfers.
+// ---------------------------------------------------------------------------
+
+model Settlement {
+  id              String   @id @default(uuid(7)) @db.Uuid
+  householdId     String   @map("household_id") @db.Uuid
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  currency        String   @db.Char(3)
+  note            String?  @db.VarChar(500)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  household Household            @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  createdBy User                 @relation(fields: [createdByUserId], references: [id])
+  transfers SettlementTransfer[]
+  payments  Payment[]
+
+  @@index([householdId, createdAt])
+  @@map("settlements")
+}
+
+model SettlementTransfer {
+  id           String @id @default(uuid(7)) @db.Uuid
+  settlementId String @map("settlement_id") @db.Uuid
+  fromUserId   String @map("from_user_id") @db.Uuid
+  toUserId     String @map("to_user_id") @db.Uuid
+  amountCents  BigInt @map("amount_cents")
+
+  settlement Settlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  fromUser   User       @relation("TransferFrom", fields: [fromUserId], references: [id])
+  toUser     User       @relation("TransferTo", fields: [toUserId], references: [id])
+
+  @@index([settlementId])
+  @@map("settlement_transfers")
+}
+
+// ---------------------------------------------------------------------------
+// Audit / notifications / reminders / uploads
+// ---------------------------------------------------------------------------
+
+/// §11 — append-only, written inside the same transaction as the change.
+/// Protected by a BEFORE UPDATE OR DELETE trigger (§10).
+model AuditLog {
+  id          String      @id @default(uuid(7)) @db.Uuid
+  householdId String      @map("household_id") @db.Uuid
+  /// Null for system actors (e.g. the reminders cron).
+  actorUserId String?     @map("actor_user_id") @db.Uuid
+  action      AuditAction
+  entityType  String      @map("entity_type") @db.VarChar(64)
+  entityId    String      @map("entity_id") @db.Uuid
+  beforeJson  Json?       @map("before_json")
+  afterJson   Json?       @map("after_json")
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  actor     User?     @relation(fields: [actorUserId], references: [id])
+
+  @@index([householdId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+/// §17 — in-app only, created in the triggering transaction.
+model Notification {
+  id          String           @id @default(uuid(7)) @db.Uuid
+  householdId String           @map("household_id") @db.Uuid
+  userId      String           @map("user_id") @db.Uuid
+  type        NotificationType
+  title       String           @db.VarChar(200)
+  body        String?          @db.VarChar(1000)
+  entityType  String?          @map("entity_type") @db.VarChar(64)
+  entityId    String?          @map("entity_id") @db.Uuid
+  readAt      DateTime?        @map("read_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+/// §18 — the (expense_split_id, offset_days) unique key is what makes the cron
+/// idempotent: a replay inserts nothing and so sends nothing twice.
+model Reminder {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  householdId    String    @map("household_id") @db.Uuid
+  expenseSplitId String    @map("expense_split_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  offsetDays     Int       @map("offset_days")
+  dueDate        DateTime  @map("due_date") @db.Date
+  sentAt         DateTime? @map("sent_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  household    Household    @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  expenseSplit ExpenseSplit @relation(fields: [expenseSplitId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([expenseSplitId, offsetDays])
+  @@index([householdId, dueDate])
+  @@map("reminders")
+}
+
+model FileUpload {
+  id               String   @id @default(uuid(7)) @db.Uuid
+  householdId      String   @map("household_id") @db.Uuid
+  uploadedByUserId String   @map("uploaded_by_user_id") @db.Uuid
+  url              String
+  pathname         String
+  contentType      String   @map("content_type") @db.VarChar(120)
+  sizeBytes        Int      @map("size_bytes")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  household  Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  uploadedBy User      @relation(fields: [uploadedByUserId], references: [id])
+  expenses   Expense[]
+
+  @@index([householdId])
+  @@map("file_uploads")
 }
