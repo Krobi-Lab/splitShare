@@ -1,36 +1,92 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SplitHome
 
-## Getting Started
+Household expense sharing on Next.js, PostgreSQL and Vercel. Built for a small
+co-habiting group rather than a general-purpose ledger: a few people, one
+household, shared bills.
 
-First, run the development server:
+> **Status: in progress.** The data model and all the shared logic are in place
+> and tested. The server actions, UI and end-to-end tests are not written yet,
+> so there is no usable application to run.
+
+## What makes it different from a spreadsheet
+
+- **Money is never a float.** Every amount is an integer number of cents in a
+  Postgres `BIGINT`. The only place a float appears is the final division for
+  display.
+- **Financial facts are append-only.** Payments and audit rows cannot be updated
+  or deleted — enforced by database triggers, not only by application code. A
+  correction is a new reversing row, so history is never rewritten.
+- **Balances are derived, never stored.** They come from a SQL view over the
+  expenses, splits and confirmed payments, so they cannot drift out of sync.
+- **Splits are agreed, not imposed.** Each participant accepts or rejects their
+  own share, and the expense tracks that as a state machine.
+- **The server owns the arithmetic.** The split UI is a suggestion; every
+  per-person amount is recomputed server-side from validated input.
+
+## Stack
+
+Next.js 16 (App Router) · React 19 · TypeScript (strict) · Tailwind CSS 4 ·
+Prisma 7 with the `pg` driver adapter · PostgreSQL (Neon in production) ·
+Auth.js v5 · Zod 4 · Vitest · Playwright
+
+## Getting started
+
+Requires Node 24 and pnpm 12.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
+cp .env.example .env          # then fill it in
+pnpm prisma:generate
+pnpm prisma:deploy            # applies migrations, including the triggers and views
+pnpm db:seed                  # optional: a household with realistic balances
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`.env.example` documents every variable. `DATABASE_URL` is the pooled
+connection used at runtime; `DIRECT_URL` is the unpooled one used for DDL,
+since migrations must not go through a transaction pooler.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Commands
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Command | Does |
+|---|---|
+| `pnpm dev` / `pnpm build` | Run / build the app |
+| `pnpm lint` · `pnpm typecheck` · `pnpm test` | The CI gate |
+| `pnpm test:coverage` | Enforces 100% coverage on the split engine |
+| `pnpm test:e2e` | Playwright (not written yet) |
+| `pnpm prisma:migrate` · `pnpm prisma:deploy` · `pnpm db:reset` | Schema |
+| `pnpm db:seed` | Seed a development household |
+| `pnpm format` | Prettier |
 
-## Learn More
+## Tests
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+pnpm test
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Unit tests need nothing but Node. The database tests assert the triggers and
+views directly and **skip cleanly** when no database is reachable, so a fresh
+clone stays green — set `TEST_DATABASE_URL` and apply migrations to it to run
+them:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+DATABASE_URL=$TEST_DATABASE_URL DIRECT_URL=$TEST_DATABASE_URL pnpm prisma:deploy
+pnpm test
+```
 
-## Deploy on Vercel
+CI runs them against a real Postgres and fails if it sees them skip, so a
+broken trigger cannot pass silently.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Layout
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+app/                 routes only, no business logic
+src/lib/             business logic — splits, expenses, auth, audit, money
+src/actions/         server actions
+src/components/      UI, grouped by feature
+prisma/              schema and migrations (the triggers are hand-written SQL)
+tests/               vitest; tests/e2e is playwright
+```
+
+`src/lib/db/*` and `src/lib/auth/*` are `server-only`: a client component that
+imports them fails the build rather than leaking a connection string.
