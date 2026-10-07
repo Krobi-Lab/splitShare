@@ -138,3 +138,79 @@ export function formatSignedMoney(
   }
   return `${cents > 0 ? "+" : "-"}${formatted}`;
 }
+
+/**
+ * Parses what somebody typed into an amount field into integer cents.
+ *
+ * Done on the string rather than with `parseFloat(text) * 100`, which is the
+ * exact bug §2.1 forbids: `parseFloat("59.41") * 100` is 5940.999999999999, and
+ * while `Math.round` rescues that particular case, the approach is wrong in
+ * general.
+ *
+ * `.` is the decimal mark and `,` groups thousands, matching
+ * `DEFAULT_MONEY_LOCALE`. It deliberately does not try to also accept the
+ * European convention where those are reversed: "1.234" is genuinely ambiguous
+ * between the two, and guessing would silently turn 1234 into 1.234 or back.
+ *
+ * Returns null for anything it cannot read exactly — including more decimal
+ * places than the currency has, which is a typo rather than something to round
+ * away quietly. Callers leave the field alone on null rather than showing an
+ * error at every keystroke.
+ */
+export function parseMoneyInput(input: string, currency: string): number | null {
+  const digits = minorUnitDigits(currency);
+
+  let text = input.trim();
+  if (text === "") {
+    return null;
+  }
+
+  const negative = text.startsWith("-");
+  if (negative) {
+    text = text.slice(1).trim();
+  }
+
+  // Drop currency symbols, spaces and thousands separators; keep digits and
+  // the decimal point.
+  text = text.replace(/,/g, "").replace(/[^\d.]/g, "");
+  if (text === "" || text === ".") {
+    return null;
+  }
+
+  const parts = text.split(".");
+  if (parts.length > 2) {
+    return null;
+  }
+
+  const whole = parts[0] === "" ? "0" : parts[0];
+  const fraction = parts[1] ?? "";
+
+  // A zero-decimal currency has no fractional part to give.
+  if (fraction.length > digits) {
+    return null;
+  }
+
+  const combined = `${whole}${fraction.padEnd(digits, "0")}`;
+  if (!/^\d+$/.test(combined)) {
+    return null;
+  }
+
+  const cents = Number(combined);
+  if (!Number.isSafeInteger(cents)) {
+    return null;
+  }
+  return negative ? -cents : cents;
+}
+
+/** Renders cents back into an editable amount field (no symbol, no grouping). */
+export function toMoneyInput(cents: number, currency: string): string {
+  const digits = minorUnitDigits(currency);
+  const sign = cents < 0 ? "-" : "";
+  const absolute = Math.abs(assertCents(cents, "amount"))
+    .toString()
+    .padStart(digits + 1, "0");
+  if (digits === 0) {
+    return `${sign}${absolute}`;
+  }
+  return `${sign}${absolute.slice(0, -digits)}.${absolute.slice(-digits)}`;
+}

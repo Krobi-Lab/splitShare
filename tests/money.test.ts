@@ -8,6 +8,8 @@ import {
   fromDbCents,
   minorUnitDigits,
   MoneyError,
+  parseMoneyInput,
+  toMoneyInput,
   sumCents,
   toDbCents,
 } from "@/lib/money";
@@ -124,5 +126,83 @@ describe("formatSignedMoney", () => {
     expect(formatSignedMoney(4000, "NZD", "en-NZ")).toBe("+$40.00");
     expect(formatSignedMoney(-5000, "NZD", "en-NZ")).toBe("-$50.00");
     expect(formatSignedMoney(0, "NZD", "en-NZ")).toBe("$0.00");
+  });
+});
+
+describe("parseMoneyInput", () => {
+  it("parses on the string, not through a float (§2.1)", () => {
+    // parseFloat("59.41") * 100 is 5940.999999999999.
+    expect(parseMoneyInput("59.41", "NZD")).toBe(5941);
+    expect(parseMoneyInput("0.07", "NZD")).toBe(7);
+    expect(parseMoneyInput("1.10", "NZD")).toBe(110);
+  });
+
+  it("accepts what people actually type", () => {
+    expect(parseMoneyInput("$59.41", "NZD")).toBe(5941);
+    expect(parseMoneyInput("1,234.56", "NZD")).toBe(123456);
+    expect(parseMoneyInput("1 234.56", "NZD")).toBe(123456);
+    expect(parseMoneyInput("  12.30  ", "NZD")).toBe(1230);
+    expect(parseMoneyInput("-12.30", "NZD")).toBe(-1230);
+  });
+
+  it("treats a bare number as whole units", () => {
+    expect(parseMoneyInput("1234", "NZD")).toBe(123400);
+    expect(parseMoneyInput("5", "NZD")).toBe(500);
+  });
+
+  it("treats a comma as a thousands separator, never a decimal mark", () => {
+    // "1.234" is genuinely ambiguous between conventions; guessing would turn
+    // 1234 into 1.234. The app pins one locale instead.
+    expect(parseMoneyInput("1,234", "NZD")).toBe(123400);
+  });
+
+  it("fills a short fractional part out to the currency's precision", () => {
+    expect(parseMoneyInput("12.3", "NZD")).toBe(1230);
+    expect(parseMoneyInput(".5", "NZD")).toBe(50);
+  });
+
+  it("rejects more precision than the currency has, rather than rounding it away", () => {
+    expect(parseMoneyInput("59.413", "NZD")).toBeNull();
+    expect(parseMoneyInput("12.5", "JPY")).toBeNull();
+  });
+
+  it("respects currencies that are not two-decimal", () => {
+    expect(parseMoneyInput("1234", "JPY")).toBe(1234);
+    expect(parseMoneyInput("1.234", "KWD")).toBe(1234);
+  });
+
+  it("returns null for anything it cannot read exactly", () => {
+    for (const input of ["", "   ", "abc", ".", "12.3.4", "-", "$"]) {
+      expect(parseMoneyInput(input, "NZD"), JSON.stringify(input)).toBeNull();
+    }
+  });
+
+  it("refuses an amount beyond safe integers", () => {
+    expect(parseMoneyInput("99999999999999999999", "NZD")).toBeNull();
+  });
+});
+
+describe("toMoneyInput", () => {
+  it("round-trips through parseMoneyInput", () => {
+    for (const cents of [0, 5, 50, 1230, 5941, -4500, 123456]) {
+      expect(parseMoneyInput(toMoneyInput(cents, "NZD"), "NZD"), String(cents)).toBe(
+        cents,
+      );
+    }
+  });
+
+  it("emits a plain editable value, with no symbol or grouping", () => {
+    expect(toMoneyInput(5941, "NZD")).toBe("59.41");
+    expect(toMoneyInput(5, "NZD")).toBe("0.05");
+    expect(toMoneyInput(-4500, "NZD")).toBe("-45.00");
+    expect(toMoneyInput(123456, "NZD")).toBe("1234.56");
+  });
+
+  it("omits the decimal point for a zero-decimal currency", () => {
+    expect(toMoneyInput(9000, "JPY")).toBe("9000");
+  });
+
+  it("rejects a non-integer amount", () => {
+    expect(() => toMoneyInput(59.41, "NZD")).toThrow(MoneyError);
   });
 });

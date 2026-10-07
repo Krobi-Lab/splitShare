@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { listHouseholds } from "@/lib/households/queries";
 import { formatSignedMoney } from "@/lib/money";
@@ -32,34 +33,36 @@ export default async function HouseholdsPage() {
           {households.map((household) => {
             const tone = ROLE_TONES[household.role];
             return (
-              <li
-                key={household.id}
-                className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"
-              >
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{household.name}</p>
-                  <p className="mt-1 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                    <span className={`${STATUS_BADGE_BASE} ${tone.className}`}>
-                      {tone.label}
-                    </span>
-                    {household.memberCount}{" "}
-                    {household.memberCount === 1 ? "member" : "members"}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p
-                    className={`font-mono text-sm font-medium ${balanceToneClass(household.yourNetCents)}`}
-                  >
-                    {formatSignedMoney(household.yourNetCents, household.currency)}
-                  </p>
-                  <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                    {household.yourNetCents > 0
-                      ? "owed to you"
-                      : household.yourNetCents < 0
-                        ? "you owe"
-                        : "settled"}
-                  </p>
-                </div>
+              <li key={household.id}>
+                <Link
+                  href={`/households/${household.id}`}
+                  className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-4 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-slate-800/50"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{household.name}</p>
+                    <p className="mt-1 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                      <span className={`${STATUS_BADGE_BASE} ${tone.className}`}>
+                        {tone.label}
+                      </span>
+                      {household.memberCount}{" "}
+                      {household.memberCount === 1 ? "member" : "members"}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p
+                      className={`font-mono text-sm font-medium ${balanceToneClass(household.yourNetCents)}`}
+                    >
+                      {formatSignedMoney(household.yourNetCents, household.currency)}
+                    </p>
+                    <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                      {household.yourNetCents > 0
+                        ? "owed to you"
+                        : household.yourNetCents < 0
+                          ? "you owe"
+                          : "settled"}
+                    </p>
+                  </div>
+                </Link>
               </li>
             );
           })}
