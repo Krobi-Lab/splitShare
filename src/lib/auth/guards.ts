@@ -12,6 +12,8 @@ import {
   UnauthenticatedError,
   WrongHouseholdError,
 } from "./errors";
+import { canActFor } from "@/lib/households/placeholders";
+
 import { can, CAPABILITY_LABELS, type Capability } from "./permissions";
 
 /**
@@ -137,6 +139,34 @@ export function assertIsSelf(
   what: string,
 ): void {
   if (actorUserId !== subjectUserId) {
+    throw new InsufficientRoleError(`Only ${what} can do that`);
+  }
+}
+
+/**
+ * §8a — the same check as `assertIsSelf`, widened to let a placeholder's manager
+ * act for it.
+ *
+ * Used wherever §8/§9 require "the person themselves": a tracked member has no
+ * account, so somebody has to accept and confirm on their behalf. The subject is
+ * loaded here rather than taken from the caller, so an action cannot pass in a
+ * flattering description of who it is acting for.
+ */
+export async function requireCanActFor(
+  actorUserId: string,
+  subjectUserId: string,
+  what: string,
+): Promise<void> {
+  if (actorUserId === subjectUserId) {
+    return;
+  }
+
+  const subject = await prisma.user.findUnique({
+    where: { id: subjectUserId },
+    select: { id: true, isPlaceholder: true, managedByUserId: true },
+  });
+
+  if (!subject || !canActFor(actorUserId, subject)) {
     throw new InsufficientRoleError(`Only ${what} can do that`);
   }
 }

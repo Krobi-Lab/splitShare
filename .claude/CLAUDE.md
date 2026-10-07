@@ -133,6 +133,33 @@ A correction is a *new* expense with a negative `amountCents` and `reversesExpen
 A user may only transition **their own** split. Rejecting sets the parent expense to
 `DISPUTED` and notifies the creator.
 
+## §8a Placeholder members (amends §8 and §12)
+
+Not every participant has an account. A **placeholder** is a household member
+tracked by somebody else — the flatmate who will never sign up but still owes for
+the groceries.
+
+- `users.is_placeholder` + `users.managed_by_user_id`, kept consistent by a
+  `CHECK`: a placeholder must have a manager, a real account must not.
+- They live in `users` rather than a parallel table because `expense_splits`,
+  `payments` and `settlement_transfers` all have foreign keys to it.
+- Their email is synthetic, under the RFC 2606 reserved `.invalid` TLD, so no
+  provider can ever verify it. `BEFORE INSERT OR UPDATE` triggers on `accounts`
+  and `sessions` make "a placeholder can never authenticate" a database
+  guarantee, not a convention.
+- **Their splits are written `ACCEPTED`**, because there is nobody to accept
+  them. This is the amendment to §8: acceptance gates the §12 balances, so
+  without it a tracked member's share would never count and balances would read
+  zero. §8 still applies in full to real accounts.
+- A split also starts `ACCEPTED` for the expense's payer and creator — entering
+  an expense is accepting your own share of it.
+- The **manager** is the one person who may act on a placeholder's behalf for §8
+  acceptance and §9 payment confirmation. `requireCanActFor` replaces
+  `assertIsSelf` wherever that applies. Not transitive: a placeholder cannot
+  manage another placeholder.
+- A placeholder is always `MEMBER`, never `ADMIN`: it cannot sign in, so admin
+  rights would be authority nobody can exercise.
+
 ## §9 Payment rules
 
 - `PaymentStatus` = `PENDING_CONFIRMATION | CONFIRMED | REVERSED`.

@@ -431,3 +431,85 @@ describeDb("§9 derived payment status and settled balances", () => {
     expect(rows[0].status).toBe("REVERSED");
   });
 });
+
+describeDb("§8a placeholder members", () => {
+  beforeEach(async () => {
+    await db!.reset();
+  });
+
+  async function seedManager(): Promise<string> {
+    const { userIds } = await seedHousehold(db!.prisma, ["Ann"]);
+    return userIds.Ann;
+  }
+
+  it("accepts a placeholder that has a manager", async () => {
+    const managerId = await seedManager();
+    const rows = await db!.prisma.$queryRaw<Array<{ id: string }>>`
+      INSERT INTO "users" (id, name, email, is_placeholder, managed_by_user_id, created_at, updated_at)
+      VALUES (gen_random_uuid(), 'Pukar', 'placeholder.p@splithome.invalid', true, ${managerId}::uuid, now(), now())
+      RETURNING id
+    `;
+    expect(rows).toHaveLength(1);
+  });
+
+  it("rejects a placeholder with no manager", async () => {
+    await expect(
+      db!.prisma.$executeRaw`
+        INSERT INTO "users" (id, name, email, is_placeholder, created_at, updated_at)
+        VALUES (gen_random_uuid(), 'Orphan', 'placeholder.o@splithome.invalid', true, now(), now())
+      `,
+    ).rejects.toThrow(/users_placeholder_has_manager/);
+  });
+
+  it("rejects a real account that has a manager", async () => {
+    const managerId = await seedManager();
+    await expect(
+      db!.prisma.$executeRaw`
+        INSERT INTO "users" (id, name, email, is_placeholder, managed_by_user_id, created_at, updated_at)
+        VALUES (gen_random_uuid(), 'Bob', 'bob@example.test', false, ${managerId}::uuid, now(), now())
+      `,
+    ).rejects.toThrow(/users_placeholder_has_manager/);
+  });
+
+  it("refuses to let a placeholder hold an account, so it can never sign in", async () => {
+    const managerId = await seedManager();
+    const [{ id: placeholderId }] = await db!.prisma.$queryRaw<[{ id: string }]>`
+      INSERT INTO "users" (id, name, email, is_placeholder, managed_by_user_id, created_at, updated_at)
+      VALUES (gen_random_uuid(), 'Pukar', 'placeholder.p@splithome.invalid', true, ${managerId}::uuid, now(), now())
+      RETURNING id
+    `;
+
+    await expect(
+      db!.prisma.$executeRaw`
+        INSERT INTO "accounts" (id, user_id, type, provider, provider_account_id)
+        VALUES (gen_random_uuid(), ${placeholderId}::uuid, 'oauth', 'google', 'sub-123')
+      `,
+    ).rejects.toThrow(/placeholder and cannot hold accounts/);
+  });
+
+  it("refuses to let a placeholder hold a session", async () => {
+    const managerId = await seedManager();
+    const [{ id: placeholderId }] = await db!.prisma.$queryRaw<[{ id: string }]>`
+      INSERT INTO "users" (id, name, email, is_placeholder, managed_by_user_id, created_at, updated_at)
+      VALUES (gen_random_uuid(), 'Pukar', 'placeholder.p@splithome.invalid', true, ${managerId}::uuid, now(), now())
+      RETURNING id
+    `;
+
+    await expect(
+      db!.prisma.$executeRaw`
+        INSERT INTO "sessions" (id, session_token, user_id, expires)
+        VALUES (gen_random_uuid(), 'tok-123', ${placeholderId}::uuid, now() + interval '1 day')
+      `,
+    ).rejects.toThrow(/placeholder and cannot hold sessions/);
+  });
+
+  it("still lets a real account hold an account row", async () => {
+    const managerId = await seedManager();
+    const rows = await db!.prisma.$queryRaw<Array<{ id: string }>>`
+      INSERT INTO "accounts" (id, user_id, type, provider, provider_account_id)
+      VALUES (gen_random_uuid(), ${managerId}::uuid, 'oauth', 'google', 'sub-real')
+      RETURNING id
+    `;
+    expect(rows).toHaveLength(1);
+  });
+});

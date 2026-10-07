@@ -49,3 +49,23 @@ export const changeRoleSchema = z.object({
 
 export type CreateHouseholdInput = z.infer<typeof createHouseholdSchema>;
 export type InviteMemberInput = z.infer<typeof inviteMemberSchema>;
+
+/** §8a — adding a member who has no account of their own. */
+export const addPlaceholderMemberSchema = z.object({
+  householdId: z.uuid(),
+  name: z
+    .string()
+    .trim()
+    .min(1, { error: "Give them a name" })
+    .max(60, { error: "Name cannot exceed 60 characters" }),
+});
+
+export const renamePlaceholderSchema = z.object({
+  householdId: z.uuid(),
+  userId: z.uuid(),
+  name: z
+    .string()
+    .trim()
+    .min(1, { error: "Give them a name" })
+    .max(60, { error: "Name cannot exceed 60 characters" }),
+});

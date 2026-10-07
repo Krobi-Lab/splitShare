@@ -124,11 +124,23 @@ model User {
   email         String    @unique
   emailVerified DateTime? @map("email_verified")
   image         String?
+  /// A member tracked by somebody else, with no account of their own (§8a).
+  /// Their splits count immediately, because there is nobody to accept them.
+  isPlaceholder Boolean   @default(false) @map("is_placeholder")
+  /// Who manages this placeholder, and may act on its behalf. Null for real
+  /// accounts. A CHECK constraint keeps the two in step.
+  managedByUserId String? @map("managed_by_user_id") @db.Uuid
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
   accounts Account[]
   sessions Session[]
+
+  // Restrict, not the default SetNull: nulling the manager would leave a
+  // placeholder with nobody able to act for it, which the CHECK constraint
+  // forbids anyway.
+  managedBy User?  @relation("PlaceholderManager", fields: [managedByUserId], references: [id], onDelete: Restrict)
+  manages   User[] @relation("PlaceholderManager")
 
   memberships        HouseholdMember[]
   householdsCreated  Household[]            @relation("HouseholdCreatedBy")
@@ -149,6 +161,7 @@ model User {
   transfersFrom      SettlementTransfer[]   @relation("TransferFrom")
   transfersTo        SettlementTransfer[]   @relation("TransferTo")
 
+  @@index([managedByUserId])
   @@map("users")
 }
 
