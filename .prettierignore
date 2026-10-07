@@ -1,0 +1,18 @@
+# Generated or tool-owned output.
+src/generated/
+.next/
+coverage/
+playwright-report/
+test-results/
+blob-report/
+pnpm-lock.yaml
+prisma/migrations/
+
+# Vendored agent skills and the project spec: owned elsewhere, not ours to
+# reformat. AGENTS.md in particular is rewritten by `next dev`.
+.agents/
+.claude/
+.windsurf/
+AGENTS.md
+CLAUDE.md
+README.md

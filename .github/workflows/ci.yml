@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: lint, typecheck, test, build
+    runs-on: ubuntu-latest
+
+    # A real Postgres, so the §10 constraint tests run for real instead of
+    # skipping. They are the only proof that the immutability triggers, the
+    # deferred split-sum assertion and the §12 views behave as specified.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: splitshare_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/splitshare_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/splitshare_test
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/splitshare_test
+      # Build-time only. Never a real secret, and never used to sign anything
+      # that leaves CI.
+      AUTH_SECRET: ci-placeholder-not-a-secret
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm prisma:generate
+
+      - name: Apply migrations
+        run: pnpm prisma:deploy
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Fails if the split engine drops below 100% coverage (§22).
+      - name: Test
+        run: pnpm test:coverage
+
+      - name: Assert the database tests actually ran
+        # They are designed to skip cleanly when no database is reachable (§22),
+        # which would otherwise let a broken trigger pass CI silently.
+        run: |
+          pnpm test 2>&1 | tee /tmp/test.log
+          if grep -q "\[db tests\] skipped" /tmp/test.log; then
+            echo "::error::Database tests skipped in CI. They must run here."
+            exit 1
+          fi
+
+      - name: Build
+        run: pnpm build
+
+      - name: Check no secret is reachable from a client component (§21)
+        run: |
+          if grep -rn "process.env" src/components app | grep -v NEXT_PUBLIC; then
+            echo "::error::A non-public env var is referenced from app/ or src/components."
+            exit 1
+          fi
