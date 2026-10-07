@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   assertCents,
@@ -64,6 +64,22 @@ describe("minorUnitDigits", () => {
 
   it("falls back to 2 digits for an unknown code", () => {
     expect(minorUnitDigits("ZZZ")).toBe(2);
+  });
+
+  it("falls back to 2 digits when Intl omits maximumFractionDigits", () => {
+    const spy = vi
+      .spyOn(Intl.NumberFormat.prototype, "resolvedOptions")
+      // A conforming runtime always reports it for style: "currency", but the
+      // type says optional, so the fallback has to actually work.
+      .mockReturnValue({ maximumFractionDigits: undefined } as unknown as ReturnType<
+        Intl.NumberFormat["resolvedOptions"]
+      >);
+    try {
+      // A code not already in the module-level cache.
+      expect(minorUnitDigits("AUD")).toBe(2);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
