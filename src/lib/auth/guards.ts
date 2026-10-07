@@ -131,7 +131,11 @@ export function assertBelongsToHousehold<T extends { householdId: string }>(
  * §8 / §9 — a user may only transition their OWN split, and only the recipient
  * of a payment may confirm it. Role alone is not enough for these.
  */
-export function assertIsSelf(actorUserId: string, subjectUserId: string, what: string): void {
+export function assertIsSelf(
+  actorUserId: string,
+  subjectUserId: string,
+  what: string,
+): void {
   if (actorUserId !== subjectUserId) {
     throw new InsufficientRoleError(`Only ${what} can do that`);
   }

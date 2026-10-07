@@ -21,13 +21,16 @@ describe("status tones", () => {
     role: ROLE_TONES,
   };
 
-  it.each(Object.entries(tables))("%s tones all carry a label and classes", (_name, table) => {
-    for (const [status, tone] of Object.entries(table)) {
-      expect(tone.label, status).not.toBe("");
-      expect(tone.className, status).toContain("bg-");
-      expect(tone.description, status).not.toBe("");
-    }
-  });
+  it.each(Object.entries(tables))(
+    "%s tones all carry a label and classes",
+    (_name, table) => {
+      for (const [status, tone] of Object.entries(table)) {
+        expect(tone.label, status).not.toBe("");
+        expect(tone.className, status).toContain("bg-");
+        expect(tone.description, status).not.toBe("");
+      }
+    },
+  );
 
   it("covers every expense status in the §7 state machine", () => {
     expect(Object.keys(EXPENSE_STATUS_TONES).sort()).toEqual(

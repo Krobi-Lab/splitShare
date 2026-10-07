@@ -29,7 +29,11 @@ const cal = "c-cal";
 
 describe("computeSplits — the sum invariant", () => {
   const cases: ComputeSplitsInput[] = [
-    { method: "EQUAL", totalCents: 9000, participants: [{ userId: ann }, { userId: bob }] },
+    {
+      method: "EQUAL",
+      totalCents: 9000,
+      participants: [{ userId: ann }, { userId: bob }],
+    },
     {
       method: "EQUAL",
       totalCents: 10_000,
@@ -85,9 +89,13 @@ describe("computeSplits — the sum invariant", () => {
 
 describe("computeSplits — EQUAL", () => {
   it("splits the §40 acceptance expense evenly", () => {
-    expect(amounts({ method: "EQUAL", totalCents: 9000, participants: [{ userId: ann }, { userId: bob }] })).toEqual([
-      4500, 4500,
-    ]);
+    expect(
+      amounts({
+        method: "EQUAL",
+        totalCents: 9000,
+        participants: [{ userId: ann }, { userId: bob }],
+      }),
+    ).toEqual([4500, 4500]);
   });
 
   it("gives leftover pennies out in userId order when amounts tie (§2.6)", () => {
@@ -107,24 +115,39 @@ describe("computeSplits — EQUAL", () => {
       amounts({
         method: "EQUAL",
         totalCents: 10,
-        participants: [{ userId: ann }, { userId: bob }, { userId: cal }, { userId: "d-dee" }],
+        participants: [
+          { userId: ann },
+          { userId: bob },
+          { userId: cal },
+          { userId: "d-dee" },
+        ],
       }),
     ).toEqual([3, 3, 2, 2]);
   });
 
   it("allocates nothing to the tail when the total is smaller than the group", () => {
     expect(
-      amounts({ method: "EQUAL", totalCents: 1, participants: [{ userId: ann }, { userId: bob }] }),
+      amounts({
+        method: "EQUAL",
+        totalCents: 1,
+        participants: [{ userId: ann }, { userId: bob }],
+      }),
     ).toEqual([1, 0]);
   });
 
   it("returns the whole total to a sole participant", () => {
-    expect(amounts({ method: "EQUAL", totalCents: 4321, participants: [{ userId: ann }] })).toEqual([4321]);
+    expect(
+      amounts({ method: "EQUAL", totalCents: 4321, participants: [{ userId: ann }] }),
+    ).toEqual([4321]);
   });
 
   it("reports no percentBps or shares for an EQUAL split", () => {
     expect(
-      computeSplits({ method: "EQUAL", totalCents: 100, participants: [{ userId: ann }] }),
+      computeSplits({
+        method: "EQUAL",
+        totalCents: 100,
+        participants: [{ userId: ann }],
+      }),
     ).toEqual([{ userId: ann, amountCents: 100, percentBps: null, shares: null }]);
   });
 });
@@ -402,14 +425,24 @@ describe("computeSplits — input guards", () => {
 
   it("rejects a zero total", () => {
     expectSplitError(
-      () => computeSplits({ method: "EQUAL", totalCents: 0, participants: [{ userId: ann }] }),
+      () =>
+        computeSplits({
+          method: "EQUAL",
+          totalCents: 0,
+          participants: [{ userId: ann }],
+        }),
       "INVALID_TOTAL",
     );
   });
 
   it("rejects a fractional total", () => {
     expectSplitError(
-      () => computeSplits({ method: "EQUAL", totalCents: 10.5, participants: [{ userId: ann }] }),
+      () =>
+        computeSplits({
+          method: "EQUAL",
+          totalCents: 10.5,
+          participants: [{ userId: ann }],
+        }),
       "INVALID_TOTAL",
     );
   });

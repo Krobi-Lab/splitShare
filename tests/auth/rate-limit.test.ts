@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { RateLimitedError } from "@/lib/auth/errors";
-import {
-  consumeRateLimit,
-  MemoryRateLimitStore,
-  RATE_LIMITS,
-} from "@/lib/rate-limit";
+import { consumeRateLimit, MemoryRateLimitStore, RATE_LIMITS } from "@/lib/rate-limit";
 
 /** A controllable clock, so nothing has to wait on real time. */
-function clockAt(start = 1_000_000): { store: MemoryRateLimitStore; advance: (ms: number) => void } {
+function clockAt(start = 1_000_000): {
+  store: MemoryRateLimitStore;
+  advance: (ms: number) => void;
+} {
   let now = start;
   const store = new MemoryRateLimitStore(() => now);
   return {

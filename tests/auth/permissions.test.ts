@@ -29,11 +29,16 @@ const EXPECTED: Record<Capability, Record<HouseholdRole, boolean>> = {
 const ROLES: HouseholdRole[] = ["ADMIN", "MEMBER", "VIEWER"];
 
 describe("§5 role matrix", () => {
-  it.each(Object.entries(EXPECTED))("%s matches the spec for every role", (capability, row) => {
-    for (const role of ROLES) {
-      expect(can(role, capability as Capability), `${role} / ${capability}`).toBe(row[role]);
-    }
-  });
+  it.each(Object.entries(EXPECTED))(
+    "%s matches the spec for every role",
+    (capability, row) => {
+      for (const role of ROLES) {
+        expect(can(role, capability as Capability), `${role} / ${capability}`).toBe(
+          row[role],
+        );
+      }
+    },
+  );
 
   it("covers exactly the capabilities the spec defines", () => {
     expect([...ALL_CAPABILITIES].sort()).toEqual(Object.keys(EXPECTED).sort());

@@ -108,7 +108,11 @@ export function formatMoney(cents: number, currency: string, locale?: string): s
 }
 
 /** Signed variant used for balances: "+$40.00 owed to you" / "-$50.00". */
-export function formatSignedMoney(cents: number, currency: string, locale?: string): string {
+export function formatSignedMoney(
+  cents: number,
+  currency: string,
+  locale?: string,
+): string {
   const formatted = formatMoney(Math.abs(cents), currency, locale);
   if (cents === 0) {
     return formatted;

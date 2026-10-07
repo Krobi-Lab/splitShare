@@ -128,7 +128,10 @@ export function computeSplits(input: ComputeSplitsInput): ComputedSplit[] {
 
   const userIds = participants.map((participant) => participant.userId);
   if (new Set(userIds).size !== userIds.length) {
-    throw new SplitError("DUPLICATE_PARTICIPANT", "Each participant may appear only once");
+    throw new SplitError(
+      "DUPLICATE_PARTICIPANT",
+      "Each participant may appear only once",
+    );
   }
 
   if (!Number.isSafeInteger(totalCents) || totalCents === 0) {
@@ -242,6 +245,9 @@ export function computeSplits(input: ComputeSplitsInput): ComputedSplit[] {
     default:
       // Unreachable for typed callers; reached if an unvalidated string ever
       // arrives from the wire.
-      throw new SplitError("UNSUPPORTED_METHOD", `Unknown split method: ${String(method)}`);
+      throw new SplitError(
+        "UNSUPPORTED_METHOD",
+        `Unknown split method: ${String(method)}`,
+      );
   }
 }

@@ -22,7 +22,12 @@ describeDb("§10 append-only tables", () => {
     await db!.reset();
   });
 
-  async function seedPayment(): Promise<{ paymentId: string; householdId: string; ann: string; bob: string }> {
+  async function seedPayment(): Promise<{
+    paymentId: string;
+    householdId: string;
+    ann: string;
+    bob: string;
+  }> {
     const { prisma } = db!;
     const { householdId, userIds } = await seedHousehold(prisma, ["Ann", "Bob"]);
     const [{ id: paymentId }] = await prisma.$queryRaw<[{ id: string }]>`
@@ -42,7 +47,8 @@ describeDb("§10 append-only tables", () => {
   it("rejects an UPDATE on payments", async () => {
     const { paymentId } = await seedPayment();
     await expect(
-      db!.prisma.$executeRaw`UPDATE "payments" SET amount_cents = 1 WHERE id = ${paymentId}::uuid`,
+      db!.prisma
+        .$executeRaw`UPDATE "payments" SET amount_cents = 1 WHERE id = ${paymentId}::uuid`,
     ).rejects.toThrow(/append-only/);
   });
 
@@ -330,11 +336,15 @@ describeDb("§9 derived payment status and settled balances", () => {
     `;
     expect(pending[0].status).toBe("PENDING_CONFIRMATION");
 
-    const beforeRows = await prisma.$queryRaw<Array<{ user_id: string; settled_net_cents: bigint }>>`
+    const beforeRows = await prisma.$queryRaw<
+      Array<{ user_id: string; settled_net_cents: bigint }>
+    >`
       SELECT user_id, settled_net_cents FROM "household_net_positions"
        WHERE household_id = ${householdId}::uuid
     `;
-    const before = new Map(beforeRows.map((r) => [r.user_id, Number(r.settled_net_cents)]));
+    const before = new Map(
+      beforeRows.map((r) => [r.user_id, Number(r.settled_net_cents)]),
+    );
     expect(before.get(Ann)).toBe(4500);
     expect(before.get(Bob)).toBe(-4500);
 
@@ -349,7 +359,9 @@ describeDb("§9 derived payment status and settled balances", () => {
     `;
     expect(confirmed[0].status).toBe("CONFIRMED");
 
-    const afterRows = await prisma.$queryRaw<Array<{ user_id: string; settled_net_cents: bigint }>>`
+    const afterRows = await prisma.$queryRaw<
+      Array<{ user_id: string; settled_net_cents: bigint }>
+    >`
       SELECT user_id, settled_net_cents FROM "household_net_positions"
        WHERE household_id = ${householdId}::uuid
     `;

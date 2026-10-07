@@ -29,8 +29,14 @@ describe("minimizeTransfers — the §12 worked example", () => {
   it("zeroes every position out", () => {
     const settled = new Map(positions.map((p) => [p.userId, p.netCents]));
     for (const transfer of minimizeTransfers(positions)) {
-      settled.set(transfer.fromUserId, settled.get(transfer.fromUserId)! + transfer.amountCents);
-      settled.set(transfer.toUserId, settled.get(transfer.toUserId)! - transfer.amountCents);
+      settled.set(
+        transfer.fromUserId,
+        settled.get(transfer.fromUserId)! + transfer.amountCents,
+      );
+      settled.set(
+        transfer.toUserId,
+        settled.get(transfer.toUserId)! - transfer.amountCents,
+      );
     }
     expect([...settled.values()]).toEqual([0, 0, 0]);
   });
@@ -123,6 +129,8 @@ describe("minimizeTransfers", () => {
   });
 
   it("rejects a fractional balance", () => {
-    expect(() => minimizeTransfers([{ userId: ANN, netCents: 0.5 }])).toThrow(/integer cents/);
+    expect(() => minimizeTransfers([{ userId: ANN, netCents: 0.5 }])).toThrow(
+      /integer cents/,
+    );
   });
 });
