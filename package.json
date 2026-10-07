@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run --project integration",
     "test:e2e": "playwright test",
     "prisma:generate": "prisma generate --config ./prisma7.config.ts",
     "prisma:migrate": "prisma migrate dev --config ./prisma7.config.ts",
