@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
 import { createExpense } from "@/actions/expenses/create";
+import { uploadReceiptAction } from "@/actions/expenses/upload-receipt";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { SplitMethod } from "@/generated/prisma/enums";
@@ -60,6 +61,7 @@ export function ExpenseForm({
   const [method, setMethod] = useState<SplitMethod>("EQUAL");
   const [selected, setSelected] = useState<string[]>(() => members.map((m) => m.userId));
   const [weights, setWeights] = useState<Record<string, string>>({});
+  const [receipt, setReceipt] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
 
@@ -137,6 +139,24 @@ export function ExpenseForm({
     );
 
     startTransition(async () => {
+      // The receipt is stored first, because the expense references it. If the
+      // expense then fails to create, the upload is left unreferenced — which is
+      // the harmless direction: a stray private blob nobody links to, rather
+      // than an expense pointing at a receipt that was never stored.
+      let receiptFileId: string | undefined;
+      if (receipt) {
+        const form = new FormData();
+        form.set("householdId", householdId);
+        form.set("file", receipt);
+        const upload = await uploadReceiptAction(form);
+        if (!upload.ok) {
+          setError(upload.message);
+          setFieldErrors(upload.fieldErrors ?? {});
+          return;
+        }
+        receiptFileId = upload.data.fileId;
+      }
+
       const result = await createExpense({
         householdId,
         paidByUserId,
@@ -147,6 +167,7 @@ export function ExpenseForm({
         date: new Date(`${date}T00:00:00.000Z`),
         splitMethod: method,
         participants,
+        receiptFileId,
       });
 
       if (!result.ok) {
@@ -221,6 +242,18 @@ export function ExpenseForm({
             </select>
           </Field>
         </div>
+
+        <Field label="Receipt (optional)" error={fieldErrors.file?.[0]}>
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp,application/pdf"
+            onChange={(event) => setReceipt(event.target.files?.[0] ?? null)}
+            className="block w-full text-sm file:mr-3 file:min-h-11 file:rounded-lg file:border-0 file:bg-slate-100 file:px-4 file:text-sm file:font-medium dark:file:bg-slate-800 dark:file:text-slate-100"
+          />
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            Stored privately — only members of this household can open it.
+          </p>
+        </Field>
 
         <Field label="Paid by">
           <select

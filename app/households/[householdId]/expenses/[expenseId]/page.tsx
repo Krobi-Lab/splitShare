@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { ExpenseActions } from "@/components/expenses/expense-actions";
 import { AcceptanceBadge, ExpenseStatusBadge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Money } from "@/components/ui/money";
 import { AppHeader } from "@/components/layout/app-header";
 import { HouseholdNav } from "@/components/layout/household-nav";
 import { NotAMemberError } from "@/lib/auth/errors";
+import { can } from "@/lib/auth/permissions";
 import { getExpense } from "@/lib/expenses/queries";
 import { getHousehold } from "@/lib/households/queries";
 
@@ -103,6 +105,14 @@ export default async function ExpensePage({
             ))}
           </ul>
         </Card>
+
+        <ExpenseActions
+          householdId={householdId}
+          expenseId={expense.id}
+          status={expense.status}
+          canLock={can(household.yourRole, "LOCK_EXPENSE")}
+          canReverse={can(household.yourRole, "CREATE_EXPENSE")}
+        />
 
         {expense.receiptFileId ? (
           <Card className="overflow-hidden">
