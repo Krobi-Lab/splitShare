@@ -85,12 +85,31 @@ export function minorUnitDigits(currency: string): number {
 }
 
 /**
+ * The locale money is rendered in when a caller does not name one.
+ *
+ * Pinned deliberately rather than left to the runtime default. Server-rendered
+ * money appears in emails, in stored notification text and in SSR'd HTML, and
+ * `Intl` would otherwise format it according to whichever locale the serverless
+ * instance happens to have: the same NZD amount reads "$45.00" on an en-NZ
+ * instance and "NZ$45.00" on an en-US one. Pinning makes the output a property
+ * of the code rather than of the host.
+ *
+ * A per-household locale would belong on the `households` row; until then this
+ * follows the project's default currency.
+ */
+export const DEFAULT_MONEY_LOCALE = "en-NZ";
+
+/**
  * The single rendering path for money (§13). The division below is the one
  * place a float appears, and it is the UI boundary §2.1 allows: `cents` is a
  * safe integer, so `cents / 10 ** digits` is exact to well beyond the digits
  * actually displayed.
  */
-export function formatMoney(cents: number, currency: string, locale?: string): string {
+export function formatMoney(
+  cents: number,
+  currency: string,
+  locale: string = DEFAULT_MONEY_LOCALE,
+): string {
   assertCents(cents, "formatMoney amount");
   const code = currency.toUpperCase();
   const digits = minorUnitDigits(code);
@@ -111,7 +130,7 @@ export function formatMoney(cents: number, currency: string, locale?: string): s
 export function formatSignedMoney(
   cents: number,
   currency: string,
-  locale?: string,
+  locale: string = DEFAULT_MONEY_LOCALE,
 ): string {
   const formatted = formatMoney(Math.abs(cents), currency, locale);
   if (cents === 0) {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   assertCents,
+  DEFAULT_MONEY_LOCALE,
   formatMoney,
   formatSignedMoney,
   fromDbCents,
@@ -84,6 +85,14 @@ describe("minorUnitDigits", () => {
 });
 
 describe("formatMoney", () => {
+  it("does not vary with the host's locale", () => {
+    // Server-rendered money ends up in emails and stored notification text, so
+    // the same amount must read the same way whatever locale the instance has.
+    expect(formatMoney(4500, "NZD")).toBe(formatMoney(4500, "NZD", DEFAULT_MONEY_LOCALE));
+    expect(formatMoney(4500, "NZD")).toBe("$45.00");
+    expect(formatMoney(4500, "USD")).toBe("US$45.00");
+  });
+
   it("renders cents as the household currency", () => {
     expect(formatMoney(9000, "NZD", "en-NZ")).toBe("$90.00");
     expect(formatMoney(4500, "USD", "en-US")).toBe("$45.00");
